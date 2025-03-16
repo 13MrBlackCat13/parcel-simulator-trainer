@@ -1,11 +1,11 @@
 import pymem
-import pymem.process
 import struct
 import time
 import os
-import ctypes
 import json
-from datetime import datetime
+import ctypes
+import keyboard
+import threading
 
 
 # Проверка прав администратора
@@ -16,27 +16,261 @@ def is_admin():
         return False
 
 
-# Класс для работы с памятью игры Parcel Simulator
-class ParcelMoneyModifier:
+# Классы для работы с разными типами данных
+class MemoryDataType:
+    INT32 = 1
+    FLOAT = 2
+    DOUBLE = 3
+    INT64 = 4
+
+    @staticmethod
+    def get_size(data_type):
+        if data_type == MemoryDataType.INT32:
+            return 4
+        elif data_type == MemoryDataType.FLOAT:
+            return 4
+        elif data_type == MemoryDataType.DOUBLE:
+            return 8
+        elif data_type == MemoryDataType.INT64:
+            return 8
+        return 4
+
+    @staticmethod
+    def pack_value(value, data_type):
+        if data_type == MemoryDataType.INT32:
+            return struct.pack("<i", int(value))
+        elif data_type == MemoryDataType.FLOAT:
+            return struct.pack("<f", float(value))
+        elif data_type == MemoryDataType.DOUBLE:
+            return struct.pack("<d", float(value))
+        elif data_type == MemoryDataType.INT64:
+            return struct.pack("<q", int(value))
+        return struct.pack("<i", int(value))
+
+    @staticmethod
+    def unpack_value(buffer, data_type):
+        if data_type == MemoryDataType.INT32:
+            return struct.unpack("<i", buffer)[0]
+        elif data_type == MemoryDataType.FLOAT:
+            return struct.unpack("<f", buffer)[0]
+        elif data_type == MemoryDataType.DOUBLE:
+            return struct.unpack("<d", buffer)[0]
+        elif data_type == MemoryDataType.INT64:
+            return struct.unpack("<q", buffer)[0]
+        return struct.unpack("<i", buffer)[0]
+
+
+# Класс для дифференциального сканирования памяти
+class DifferentialMemoryScanner:
+    def __init__(self, process_handle):
+        self.process_handle = process_handle
+        self.memory_regions = []
+        self.scan_results = []
+        self.stop_scan = False
+
+    # Получение доступных регионов памяти
+    def get_memory_regions(self):
+        regions = []
+        address = 0
+
+        print("Поиск доступных регионов памяти...")
+
+        while True:
+            try:
+                mbi = pymem.memory.virtual_query(self.process_handle, address)
+                address = mbi.BaseAddress + mbi.RegionSize
+
+                # Проверяем, подходит ли регион для сканирования
+                if (mbi.State == pymem.ressources.structure.MEMORY_STATE.MEM_COMMIT and
+                        mbi.Protect & pymem.ressources.structure.MEMORY_PROTECTION.PAGE_READWRITE and
+                        mbi.Protect != pymem.ressources.structure.MEMORY_PROTECTION.PAGE_GUARD and
+                        mbi.RegionSize > 0):
+                    regions.append((mbi.BaseAddress, mbi.RegionSize))
+
+                # Проверка на конец адресного пространства
+                if address > 0x7FFFFFFFFFFF:
+                    break
+
+            except Exception as e:
+                # Пропускаем недоступные регионы
+                address += 0x1000
+                if address > 0x7FFFFFFFFFFF:
+                    break
+
+        self.memory_regions = regions
+        print(f"Найдено {len(regions)} доступных регионов памяти")
+
+    # Первое сканирование - поиск значения
+    def first_scan(self, value, data_type=MemoryDataType.INT32):
+        if not self.memory_regions:
+            self.get_memory_regions()
+
+        size = MemoryDataType.get_size(data_type)
+        value_bytes = MemoryDataType.pack_value(value, data_type)
+
+        print(f"Начинаем первое сканирование для значения {value}...")
+
+        # Создаем поток для обработки нажатия ESC
+        self.stop_scan = False
+
+        def check_for_esc():
+            print("Нажмите ESC для остановки сканирования")
+            while True:
+                if keyboard.is_pressed('esc'):
+                    print("\nПолучена команда на остановку сканирования")
+                    self.stop_scan = True
+                    break
+                time.sleep(0.1)
+
+        esc_thread = threading.Thread(target=check_for_esc)
+        esc_thread.daemon = True
+        esc_thread.start()
+
+        start_time = time.time()
+        addresses = []
+
+        # Сканируем регионы памяти
+        for i, (base_addr, region_size) in enumerate(self.memory_regions):
+            if self.stop_scan:
+                break
+
+            try:
+                # Показываем прогресс
+                if i % 10 == 0:
+                    elapsed = time.time() - start_time
+                    progress = (i / len(self.memory_regions)) * 100
+                    print(
+                        f"\rПрогресс: {progress:.1f}% | Регион {i + 1}/{len(self.memory_regions)} | Найдено: {len(addresses)}",
+                        end="")
+
+                # Читаем регион памяти
+                buffer = pymem.memory.read_bytes(self.process_handle, base_addr, region_size)
+
+                # Ищем значение в буфере
+                offset = 0
+                while True:
+                    offset = buffer.find(value_bytes, offset)
+                    if offset == -1:
+                        break
+
+                    addr = base_addr + offset
+                    addresses.append(addr)
+                    offset += size
+
+            except Exception as e:
+                # Пропускаем ошибки чтения памяти
+                continue
+
+        elapsed = time.time() - start_time
+        print(f"\nСканирование завершено за {elapsed:.2f} секунд")
+        print(f"Найдено {len(addresses)} адресов со значением {value}")
+
+        self.scan_results = addresses
+        return addresses
+
+    # Следующее сканирование - фильтрация результатов
+    def next_scan(self, value, data_type=MemoryDataType.INT32):
+        if not self.scan_results:
+            print("Нет результатов предыдущего сканирования")
+            return []
+
+        print(f"Фильтрация результатов для значения {value}...")
+
+        size = MemoryDataType.get_size(data_type)
+        matching_addresses = []
+
+        for addr in self.scan_results:
+            try:
+                # Читаем текущее значение по адресу
+                buffer = pymem.memory.read_bytes(self.process_handle, addr, size)
+                current_value = MemoryDataType.unpack_value(buffer, data_type)
+
+                # Проверяем, совпадает ли значение
+                if abs(current_value - value) < 0.01:  # Для чисел с плавающей точкой
+                    matching_addresses.append(addr)
+            except Exception as e:
+                # Пропускаем ошибки чтения памяти
+                continue
+
+        print(f"Осталось {len(matching_addresses)} адресов со значением {value}")
+
+        self.scan_results = matching_addresses
+        return matching_addresses
+
+    # Сканирование с учетом изменений
+    def changed_value_scan(self, change_type="changed"):
+        if not self.scan_results:
+            print("Нет результатов предыдущего сканирования")
+            return []
+
+        print(f"Фильтрация результатов по изменению значения ({change_type})...")
+
+        # Сохраняем текущие значения
+        current_values = {}
+        for addr in self.scan_results:
+            try:
+                # Читаем текущее значение по адресу (предполагаем INT32)
+                buffer = pymem.memory.read_bytes(self.process_handle, addr, 4)
+                current_values[addr] = struct.unpack("<i", buffer)[0]
+            except Exception as e:
+                # Пропускаем ошибки чтения памяти
+                continue
+
+        # Просим пользователя изменить значение в игре
+        print("Пожалуйста, измените значение денег в игре (заработайте или потратьте).")
+        input("Нажмите Enter, когда изменение будет выполнено...")
+
+        # Проверяем, какие значения изменились
+        matching_addresses = []
+        for addr, old_value in current_values.items():
+            try:
+                # Читаем новое значение
+                buffer = pymem.memory.read_bytes(self.process_handle, addr, 4)
+                new_value = struct.unpack("<i", buffer)[0]
+
+                # Проверяем условие изменения
+                if change_type == "changed" and old_value != new_value:
+                    matching_addresses.append(addr)
+                    print(f"Адрес {hex(addr)}: {old_value} -> {new_value}")
+                elif change_type == "increased" and new_value > old_value:
+                    matching_addresses.append(addr)
+                    print(f"Адрес {hex(addr)}: {old_value} -> {new_value} (увеличилось)")
+                elif change_type == "decreased" and new_value < old_value:
+                    matching_addresses.append(addr)
+                    print(f"Адрес {hex(addr)}: {old_value} -> {new_value} (уменьшилось)")
+            except Exception as e:
+                # Пропускаем ошибки чтения памяти
+                continue
+
+        print(f"Осталось {len(matching_addresses)} адресов после фильтрации")
+
+        self.scan_results = matching_addresses
+        return matching_addresses
+
+
+# Основной класс программы
+class MoneyChanger:
     def __init__(self):
         self.process_name = "parcel-Win64-Shipping.exe"
         self.display_name = "Parcel Simulator"
         self.pm = None
+        self.process_handle = None
         self.money_addresses = []
-        self.save_file = "parcel_addresses.json"
+        self.save_file = "parcel_money_addresses.json"
+        self.scanner = None
         self.current_money = 0
-
-        # Приоритетные адреса на основе анализа предыдущих запусков
-        self.priority_addresses = [
-            0x24A1698D878  # Адрес, который точно обновляется при изменении денег
-        ]
 
     # Подключение к процессу игры
     def connect_to_game(self):
         try:
             print(f"Подключение к игре {self.display_name}...")
             self.pm = pymem.Pymem(self.process_name)
+            self.process_handle = self.pm.process_handle
             print(f"Успешно подключились к игре! (ID процесса: {self.pm.process_id})")
+
+            # Создаем сканер памяти
+            self.scanner = DifferentialMemoryScanner(self.process_handle)
+
             return True
         except pymem.exception.ProcessNotFound:
             print(f"Процесс {self.process_name} не найден.")
@@ -46,7 +280,7 @@ class ParcelMoneyModifier:
             print(f"Ошибка при подключении к игре: {str(e)}")
             return False
 
-    # Загрузка сохраненных адресов из файла
+    # Загрузка сохраненных адресов
     def load_saved_addresses(self):
         if not os.path.exists(self.save_file):
             return False
@@ -59,45 +293,41 @@ class ParcelMoneyModifier:
                     return False
 
                 # Загружаем адреса из файла
-                self.money_addresses = [int(addr, 16) for addr in data['addresses']]
-                print(f"Загружено {len(self.money_addresses)} сохраненных адресов.")
+                addresses = [int(addr, 16) for addr in data['addresses']]
+                print(f"Загружено {len(addresses)} сохраненных адресов.")
 
                 # Проверяем валидность адресов
                 valid_addresses = []
-                for addr in self.money_addresses:
+                for addr in addresses:
                     try:
                         value = self.pm.read_int(addr)
-                        valid_addresses.append(addr)
+                        if 0 <= value <= 10000000:  # Разумный диапазон для денег
+                            valid_addresses.append(addr)
+                            print(f"Адрес {hex(addr)}: значение = {value}")
                     except:
                         continue
 
-                if len(valid_addresses) > 0:
+                if valid_addresses:
                     self.money_addresses = valid_addresses
-                    print(f"Проверено и подтверждено {len(valid_addresses)} адресов.")
+                    print(f"Найдено {len(valid_addresses)} действительных адресов.")
 
-                    # Получаем текущее значение денег из первого адреса
+                    # Считываем текущее значение денег
                     try:
-                        # Если есть приоритетный адрес в списке, используем его
-                        priority_addr = next((addr for addr in valid_addresses if addr in self.priority_addresses),
-                                             None)
-                        if priority_addr:
-                            self.current_money = self.pm.read_int(priority_addr)
-                        else:
-                            self.current_money = self.pm.read_int(valid_addresses[0])
+                        self.current_money = self.pm.read_int(valid_addresses[0])
                         print(f"Текущее количество денег: {self.current_money}")
                     except:
                         pass
 
                     return True
                 else:
-                    print("Ни один из сохраненных адресов не валиден в этой сессии игры.")
+                    print("Ни один из сохраненных адресов не действителен.")
                     return False
 
         except Exception as e:
             print(f"Ошибка при загрузке сохраненных адресов: {str(e)}")
             return False
 
-    # Сохранение адресов в файл
+    # Сохранение адресов
     def save_addresses(self):
         if not self.money_addresses:
             return
@@ -105,7 +335,7 @@ class ParcelMoneyModifier:
         try:
             data = {
                 'addresses': [hex(addr) for addr in self.money_addresses],
-                'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                'timestamp': time.strftime("%Y-%m-%d %H:%M:%S")
             }
 
             with open(self.save_file, 'w') as f:
@@ -115,195 +345,26 @@ class ParcelMoneyModifier:
         except Exception as e:
             print(f"Ошибка при сохранении адресов: {str(e)}")
 
-    # Сканирование известных адресов (используя закономерности из прошлых сканирований)
-    def scan_known_patterns(self, value):
-        print("Быстрое сканирование известных областей памяти...")
-
-        # Сначала проверяем приоритетные адреса
-        priority_results = []
-        print("Проверка приоритетных адресов:")
-        for addr in self.priority_addresses:
-            try:
-                read_value = self.pm.read_int(addr)
-                print(f"  Адрес {hex(addr)}: текущее значение = {read_value}")
-                if read_value == value:
-                    priority_results.append(addr)
-                    print(f"  Найдено совпадение! Этот адрес содержит искомое значение {value}")
-            except Exception as e:
-                print(f"  Ошибка при чтении адреса {hex(addr)}: {str(e)}")
-
-        # Шаблоны адресов, основанные на предыдущих результатах
-        patterns = [
-            "24A16672", "24A16674", "24A1667D", "24A1698D",
-            "24AC0972", "24ACA332", "24AEC950", "24AEC951",
-            "24AEC952", "24AEC953", "24AEC954", "24AEC957",
-            "24AEC959", "24AEC95C", "24AEC95E", "24AEC95F",
-            "24AF7503"
-        ]
-
-        results = []
-        found_count = 0
-
-        print("Сканирование по известным шаблонам адресов...")
-        for pattern in patterns:
-            # Преобразуем шаблон в диапазон адресов
-            start_addr = int(pattern + "000", 16)
-            end_addr = int(pattern + "FFF", 16)
-            print(f"Проверка диапазона {hex(start_addr)} - {hex(end_addr)}")
-
-            # Сканируем заданный диапазон
-            try:
-                # Читаем весь диапазон памяти
-                buffer = self.pm.read_bytes(start_addr, end_addr - start_addr)
-
-                # Ищем значение в буфере
-                value_bytes = struct.pack("<I", value)
-                offset = 0
-                pattern_found = 0
-
-                while True:
-                    offset = buffer.find(value_bytes, offset)
-                    if offset == -1:
-                        break
-
-                    found_address = start_addr + offset
-                    results.append(found_address)
-                    found_count += 1
-                    pattern_found += 1
-                    offset += 4
-
-                print(f"  Найдено {pattern_found} адресов в этом диапазоне")
-
-            except Exception as e:
-                # Пропускаем ошибки чтения памяти
-                continue
-
-        # Объединяем результаты с приоритетными адресами
-        combined_results = list(set(priority_results + results))
-        print(f"Всего найдено {len(combined_results)} адресов со значением {value}")
-
-        return combined_results
-
-    # Автоматическая проверка адресов путем наблюдения за их изменениями
-    def auto_verify_addresses(self, all_addresses, test_value):
-        """
-        Автоматически проверяет адреса, изменяя значение и наблюдая, какие адреса изменяются в ответ
-        """
-        print("\nАвтоматическая проверка адресов:")
-        print("В следующих шагах программа изменит значение денег в игре и")
-        print("проверит, какие адреса изменяются в ответ на это изменение.")
-        print("Подтвердите, что вы хотите продолжить (y/n):")
-
-        if input().lower() != 'y':
-            print("Автоматическая проверка отменена.")
+    # Проверка адресов путем изменения значения
+    def verify_addresses(self, addresses, test_value):
+        if not addresses:
+            print("Нет адресов для проверки.")
             return []
 
-        # Сохраняем текущие значения всех адресов
-        current_values = {}
-        for addr in all_addresses:
-            try:
-                current_values[addr] = self.pm.read_int(addr)
-            except:
-                pass
+        # Группируем адреса для проверки (если их много)
+        grouped_addresses = []
+        for i in range(0, len(addresses), 5):
+            grouped_addresses.append(addresses[i:i + 5])
 
-        print(f"Сохранено {len(current_values)} текущих значений.")
-        print(f"Текущие значения для приоритетных адресов:")
-        for addr in self.priority_addresses:
-            if addr in current_values:
-                print(f"  {hex(addr)}: {current_values[addr]}")
+        # Если адресов немного, проверяем каждый отдельно
+        if len(addresses) <= 5:
+            grouped_addresses = [[addr] for addr in addresses]
 
-        # Устанавливаем тестовое значение для всех адресов
-        print(f"\nУстановка тестового значения {test_value} для всех адресов...")
-        for addr in current_values.keys():
-            try:
-                self.pm.write_int(addr, test_value)
-            except Exception as e:
-                print(f"Ошибка при записи в адрес {hex(addr)}: {str(e)}")
-
-        # Даем пользователю проверить, изменились ли деньги в игре
-        print("\nПроверьте, что количество денег в игре изменилось на", test_value)
-        print("Подтвердите, что деньги изменились (y/n):")
-
-        money_changed = input().lower() == 'y'
-
-        if not money_changed:
-            print("Вы указали, что деньги не изменились. Проверка будет проведена вручную.")
-
-            # Восстанавливаем оригинальные значения
-            for addr, value in current_values.items():
-                try:
-                    self.pm.write_int(addr, value)
-                except:
-                    pass
-
-            return []
-
-        # Теперь выполним операцию в игре, которая изменит деньги
-        print("\nТеперь нам нужно изменить деньги в игре естественным образом.")
-        print("Пожалуйста, выполните действие в игре, которое изменит количество денег")
-        print("(например, купите что-то или заработайте деньги).")
-        print("После того, как деньги изменятся, введите новое значение денег:")
-
-        try:
-            new_game_money = int(input())
-        except ValueError:
-            print("Неверный ввод. Используем значение по умолчанию.")
-            new_game_money = test_value + 10
-
-        # Проверяем, какие адреса обновились до нового значения
-        updated_addresses = []
-        for addr in current_values.keys():
-            try:
-                new_value = self.pm.read_int(addr)
-                if new_value == new_game_money:
-                    updated_addresses.append(addr)
-                    print(f"Адрес {hex(addr)} обновился до {new_game_money}")
-            except:
-                pass
-
-        print(f"\nНайдено {len(updated_addresses)} адресов, которые обновились до нового значения денег:")
-        for addr in updated_addresses:
-            print(f"  {hex(addr)}")
-
-        # Восстанавливаем исходное значение денег
-        if updated_addresses:
-            for addr in updated_addresses:
-                try:
-                    self.pm.write_int(addr, current_values[addr])
-                    print(f"Восстановлено исходное значение для адреса {hex(addr)}")
-                except Exception as e:
-                    print(f"Ошибка при восстановлении значения для адреса {hex(addr)}: {str(e)}")
-
-        print("Проверьте, что деньги в игре вернулись к исходному значению.")
-
-        return updated_addresses
-
-    # Проверка адресов и определение, какие из них действительно отвечают за деньги
-    def verify_addresses(self, all_addresses, test_value):
-        print("Проверка найденных адресов...")
-
-        # Получаем уникальные адреса
-        unique_addresses = list(set(all_addresses))
-        print(f"Проверка {len(unique_addresses)} уникальных адресов...")
-
-        # Сначала предлагаем автоматическую проверку
-        print("\nДоступно два метода проверки адресов:")
-        print("1. Автоматический метод (программа сама определит нужные адреса)")
-        print("2. Ручной метод (проверка по группам)")
-        verify_method = input("Выберите метод проверки (1/2): ")
-
-        if verify_method == "1":
-            return self.auto_verify_addresses(unique_addresses, test_value)
-
-        # Если выбран ручной метод или автоматический не сработал, используем ручную проверку
-        # Группируем адреса для более эффективной проверки
-        address_groups = []
-        for i in range(0, len(unique_addresses), 5):  # По 5 адресов в группе
-            address_groups.append(unique_addresses[i:i + 5])
+        print(f"Проверка {len(addresses)} адресов...")
 
         # Сохраняем оригинальные значения
         original_values = {}
-        for addr in unique_addresses:
+        for addr in addresses:
             try:
                 original_values[addr] = self.pm.read_int(addr)
             except:
@@ -311,60 +372,71 @@ class ParcelMoneyModifier:
 
         verified_addresses = []
 
-        # Проверяем каждую группу адресов
-        print("\nПроверка адресов по группам:")
+        # Проверяем каждую группу или отдельный адрес
+        for i, group in enumerate(grouped_addresses):
+            print(f"\nПроверка группы {i + 1}/{len(grouped_addresses)} ({len(group)} адресов)")
 
-        for i, group in enumerate(address_groups):
-            # Показываем адреса группы
-            print(f"\nГруппа {i + 1} из {len(address_groups)}")
+            # Выводим адреса группы
             for addr in group:
-                print(f"  {hex(addr)}")
+                try:
+                    current_value = self.pm.read_int(addr)
+                    print(f"  {hex(addr)}: текущее значение = {current_value}")
+                except:
+                    print(f"  {hex(addr)}: ошибка чтения")
 
-            # Изменяем значения в этой группе
+            # Изменяем значения всех адресов в группе
             for addr in group:
-                if addr in original_values:
-                    try:
-                        self.pm.write_int(addr, test_value)
-                    except:
-                        continue
-
-            print(f"Изменено значение на {test_value} для группы адресов.")
-            print("Проверьте, изменилось ли количество денег в игре.")
-            result = input("Изменилось ли количество денег в игре на " + str(test_value) + "? (y/n): ").lower()
-
-            if result == 'y':
-                # Нашли группу с нужными адресами, теперь проверим каждый адрес
-                print("Найдена группа с нужными адресами! Проверяем каждый адрес...")
-
-                # Сначала восстановим оригинальные значения
-                for addr in group:
+                try:
                     if addr in original_values:
+                        self.pm.write_int(addr, test_value)
+                except Exception as e:
+                    print(f"Ошибка при записи в адрес {hex(addr)}: {str(e)}")
+
+            print(f"Установлено значение {test_value}.")
+            print("Проверьте, изменилось ли количество денег в игре.")
+
+            # Спрашиваем пользователя, изменились ли деньги
+            response = input("Деньги изменились? (y/n): ").lower()
+
+            if response == 'y':
+                # Если группа содержит только один адрес, просто добавляем его
+                if len(group) == 1:
+                    verified_addresses.append(group[0])
+                    print(f"Адрес {hex(group[0])} подтвержден!")
+                else:
+                    # Проверяем каждый адрес в группе отдельно
+                    print("Группа содержит нужные адреса! Проверяем каждый адрес отдельно...")
+
+                    # Восстанавливаем все значения
+                    for addr, value in original_values.items():
                         try:
-                            self.pm.write_int(addr, original_values[addr])
+                            self.pm.write_int(addr, value)
                         except:
+                            pass
+
+                    # Проверяем каждый адрес
+                    for addr in group:
+                        if addr not in original_values:
                             continue
 
-                # Теперь проверим каждый адрес отдельно
-                for addr in group:
-                    if addr in original_values:
                         try:
-                            # Сохраняем оригинальное значение
-                            original = original_values[addr]
-                            # Изменяем значение только для этого адреса
+                            # Изменяем только один адрес
+                            orig_value = original_values[addr]
                             self.pm.write_int(addr, test_value)
 
-                            print(f"Адрес {hex(addr)}: изменено на {test_value}.")
-                            individual_result = input("Изменились ли деньги в игре? (y/n): ").lower()
+                            print(f"Адрес {hex(addr)}: установлено значение {test_value}.")
+                            print("Проверьте, изменилось ли количество денег в игре.")
 
-                            if individual_result == 'y':
+                            resp = input("Деньги изменились? (y/n): ").lower()
+                            if resp == 'y':
                                 verified_addresses.append(addr)
+                                print(f"Адрес {hex(addr)} подтвержден!")
 
-                            # Восстанавливаем оригинальное значение
-                            self.pm.write_int(addr, original)
+                            # Восстанавливаем значение
+                            self.pm.write_int(addr, orig_value)
 
                         except Exception as e:
                             print(f"Ошибка при проверке адреса {hex(addr)}: {str(e)}")
-                            continue
 
             # Восстанавливаем оригинальные значения для всей группы
             for addr in group:
@@ -374,170 +446,98 @@ class ParcelMoneyModifier:
                     except:
                         continue
 
+        print(f"\nПроверка завершена. Найдено {len(verified_addresses)} подтвержденных адресов.")
         return verified_addresses
 
-    # Поиск адресов памяти, связанных с деньгами в игре
-    def find_money_addresses(self):
-        # Запрашиваем у пользователя текущее значение денег
+    # Поиск адреса денег
+    def find_money_address(self):
+        print("Поиск адреса денег в памяти игры...")
+
+        # Сначала пробуем загрузить сохраненные адреса
+        if self.load_saved_addresses():
+            print("Успешно загружены сохраненные адреса.")
+            return True
+
+        print("\nДля поиска адреса денег будет использован метод дифференциального сканирования.")
+        print("Этот метод позволяет найти адрес, даже если он меняется при перезапуске игры.")
+
+        # Спрашиваем текущее значение денег
         try:
-            self.current_money = int(input("Введите текущее количество денег в игре: "))
+            current_money = int(input("Введите текущее количество денег в игре: "))
         except ValueError:
             print("Неверный ввод. Введите число.")
             return False
 
-        # Спрашиваем пользователя, какой метод сканирования использовать
-        print("\nДоступны два метода сканирования:")
-        print("1. Быстрый метод (сканирование только известных областей)")
-        print("2. Полный метод (более тщательное сканирование, но медленнее)")
-        scan_method = input("Выберите метод сканирования (1/2): ")
+        # Выполняем первое сканирование
+        print("Выполняем первое сканирование...")
+        self.scanner.first_scan(current_money)
 
-        all_addresses = []
-        if scan_method == "1":
-            # Быстрый метод: проверяем только известные шаблоны адресов
-            all_addresses = self.scan_known_patterns(self.current_money)
-        else:
-            # Полный метод не реализуем, используем быстрый
-            print("Полный метод в этой версии не реализован. Используем быстрый метод.")
-            all_addresses = self.scan_known_patterns(self.current_money)
+        if not self.scanner.scan_results:
+            # Пробуем другие типы данных
+            print("Не найдено адресов с целочисленным значением. Пробуем Float...")
+            self.scanner.first_scan(current_money, MemoryDataType.FLOAT)
 
-        if not all_addresses:
-            print("Не удалось найти адреса с текущим значением денег.")
-            print("Убедитесь, что вы ввели правильное значение и попробуйте снова.")
+        if not self.scanner.scan_results:
+            print("Не удалось найти адреса. Возможно, игра использует нестандартный формат данных.")
             return False
 
-        # Запрашиваем тестовое значение для проверки адресов
-        try:
-            test_value = int(input("Введите тестовое значение для проверки (рекомендуется: текущее значение + 1000): "))
-        except ValueError:
-            print("Неверный ввод. Используем значение по умолчанию.")
-            test_value = self.current_money + 1000
+        # Если найдено слишком много адресов, фильтруем их с помощью дифференциального сканирования
+        if len(self.scanner.scan_results) > 100:
+            print("\nНайдено слишком много адресов. Выполните следующие действия:")
+            print("1. Измените количество денег в игре (заработайте или потратьте немного)")
+            print("2. Введите новое значение денег")
 
-        # Проверяем адреса, чтобы определить, какие из них действительно связаны с деньгами
-        verified_addresses = self.verify_addresses(all_addresses, test_value)
+            try:
+                new_money = int(input("Введите новое количество денег после изменения: "))
+            except ValueError:
+                print("Неверный ввод. Введите число.")
+                return False
 
-        if not verified_addresses:
-            print("Не удалось найти адреса, связанные с деньгами в игре.")
-            print("Попробуйте запустить программу снова.")
-            return False
+            # Фильтруем результаты по новому значению
+            self.scanner.next_scan(new_money)
 
-        # Сохраняем найденные адреса
-        self.money_addresses = verified_addresses
-        print(f"\nНайдено {len(verified_addresses)} адресов, связанных с деньгами в игре:")
-        for addr in verified_addresses:
-            print(f"  {hex(addr)}")
+        # Если всё еще много адресов, используем сканирование по изменению
+        if len(self.scanner.scan_results) > 20:
+            print("\nВсё еще много адресов. Выполним сканирование по изменению.")
+            self.scanner.changed_value_scan()
 
-        # Сохраняем адреса для будущего использования
-        self.save_addresses()
-        return True
+        # Проверяем найденные адреса
+        if self.scanner.scan_results:
+            test_value = current_money + 1000
+            print(f"\nПроверка найденных адресов с тестовым значением {test_value}...")
+
+            verified_addresses = self.verify_addresses(self.scanner.scan_results, test_value)
+
+            if verified_addresses:
+                self.money_addresses = verified_addresses
+                self.current_money = current_money
+                self.save_addresses()
+                return True
+
+        print("Не удалось подтвердить адреса денег.")
+        return False
 
     # Изменение значения денег
     def change_money(self, new_value):
         if not self.money_addresses:
-            print("Не найдены адреса для изменения денег.")
+            print("Адрес денег не найден. Сначала выполните поиск.")
             return False
 
-        successful_writes = 0
+        success = False
         for addr in self.money_addresses:
             try:
                 self.pm.write_int(addr, new_value)
-                successful_writes += 1
+                print(f"Значение успешно изменено по адресу {hex(addr)}")
+                success = True
             except Exception as e:
                 print(f"Ошибка при записи значения по адресу {hex(addr)}: {str(e)}")
 
-        print(f"Успешно изменено {successful_writes} из {len(self.money_addresses)} адресов")
-
-        if successful_writes > 0:
+        if success:
             self.current_money = new_value
             return True
         else:
+            print("Не удалось изменить значение ни по одному адресу.")
             return False
-
-    # Отслеживание изменений в памяти (мониторинг адресов)
-    def monitor_memory_changes(self, duration=10):
-        """
-        Отслеживает изменения в памяти в течение указанного времени
-        """
-        print(f"\nНачинаем мониторинг изменений в памяти ({duration} секунд)...")
-        print("Играйте в игру как обычно и заработайте немного денег.")
-        print("Программа отслеживает, какие адреса изменяются.")
-
-        # Определяем области памяти для мониторинга
-        memory_regions = []
-        patterns = ["24A1", "24AC", "24AE", "24AF"]
-
-        for pattern in patterns:
-            start_addr = int(pattern + "00000", 16)
-            end_addr = int(pattern + "FFFFF", 16)
-            memory_regions.append((start_addr, end_addr - start_addr))
-
-        # Сохраняем текущие значения
-        initial_values = {}
-        for start_addr, size in memory_regions:
-            try:
-                print(f"Сканирование региона {hex(start_addr)} - {hex(start_addr + size)}")
-                buffer = self.pm.read_bytes(start_addr, size)
-
-                # Ищем все 4-байтовые значения
-                for offset in range(0, size - 4, 4):
-                    addr = start_addr + offset
-                    try:
-                        value = struct.unpack("<I", buffer[offset:offset + 4])[0]
-                        if 0 <= value <= 1000000:  # Разумные значения для денег
-                            initial_values[addr] = value
-                    except:
-                        continue
-
-                print(f"  Сохранено {len(initial_values)} значений из этого региона")
-
-            except Exception as e:
-                print(f"  Ошибка при сканировании региона: {str(e)}")
-
-        print(f"Всего сохранено {len(initial_values)} исходных значений.")
-
-        # Ждем указанное время
-        print(f"Мониторинг запущен. Пожалуйста, заработайте или потратьте деньги в игре.")
-        for i in range(duration, 0, -1):
-            print(f"\rОсталось {i} секунд... ", end="")
-            time.sleep(1)
-        print("\nЗавершение мониторинга...")
-
-        # Проверяем, какие значения изменились
-        changed_values = {}
-        for addr, initial_value in initial_values.items():
-            try:
-                current_value = self.pm.read_int(addr)
-                if current_value != initial_value:
-                    changed_values[addr] = (initial_value, current_value)
-            except:
-                continue
-
-        print(f"\nОбнаружено {len(changed_values)} измененных значений:")
-        for addr, (old, new) in changed_values.items():
-            print(f"  {hex(addr)}: {old} -> {new}")
-
-        return changed_values
-
-    # Чтение текущего значения денег
-    def read_current_money(self):
-        if not self.money_addresses:
-            print("Не найдены адреса для чтения денег.")
-            return None
-
-        try:
-            # Получаем приоритетный адрес, если он есть в списке
-            priority_addr = next((addr for addr in self.money_addresses if addr in self.priority_addresses), None)
-
-            if priority_addr:
-                value = self.pm.read_int(priority_addr)
-            else:
-                # Иначе используем первый адрес
-                value = self.pm.read_int(self.money_addresses[0])
-
-            self.current_money = value
-            return value
-        except Exception as e:
-            print(f"Ошибка при чтении значения: {str(e)}")
-            return None
 
     # Закрытие соединения с процессом
     def disconnect(self):
@@ -546,7 +546,7 @@ class ParcelMoneyModifier:
             print("Отключено от процесса игры.")
 
 
-# Главная функция программы
+# Основная функция
 def main():
     # Проверка прав администратора
     if not is_admin():
@@ -556,30 +556,28 @@ def main():
         return
 
     print("=== Модификатор денег для Parcel Simulator ===")
-    print("Версия 3.0 - Оптимизированная версия с расширенными возможностями")
+    print("Версия 6.0 - С дифференциальным сканированием")
 
     # Создаем экземпляр модификатора
-    modifier = ParcelMoneyModifier()
+    changer = MoneyChanger()
 
     # Подключаемся к процессу игры
-    if not modifier.connect_to_game():
+    if not changer.connect_to_game():
         input("Нажмите Enter для выхода...")
         return
 
-    # Пытаемся загрузить сохраненные адреса
-    if not modifier.load_saved_addresses():
-        print("Не удалось загрузить сохраненные адреса. Выполняем поиск новых адресов...")
-        if not modifier.find_money_addresses():
-            input("Нажмите Enter для выхода...")
-            return
+    # Ищем адрес денег
+    if not changer.find_money_address():
+        print("Не удалось найти адрес денег. Возможно, игра использует нестандартный формат данных.")
+        input("Нажмите Enter для выхода...")
+        return
 
     # Главное меню программы
     while True:
         print("\n=== Меню ===")
-        print(f"Текущее количество денег: {modifier.read_current_money()}")
+        print(f"Текущее количество денег: {changer.current_money}")
         print("1. Изменить количество денег")
-        print("2. Найти адреса заново")
-        print("3. Мониторинг изменений в памяти (для отладки)")
+        print("2. Найти адрес денег заново")
         print("0. Выход")
 
         choice = input("Выберите действие: ")
@@ -587,26 +585,19 @@ def main():
         if choice == "1":
             try:
                 new_money = int(input("Введите новое количество денег: "))
-                modifier.change_money(new_money)
-                print("Проверьте, изменилось ли количество денег в игре.")
+                if changer.change_money(new_money):
+                    print("Деньги успешно изменены!")
+                else:
+                    print("Не удалось изменить деньги.")
             except ValueError:
-                print("Неверный ввод. Введите число.")
+                print("Некорректный ввод. Введите число.")
 
         elif choice == "2":
-            modifier.find_money_addresses()
-
-        elif choice == "3":
-            duration = input("Введите длительность мониторинга в секундах (по умолчанию 10): ")
-            try:
-                duration = int(duration)
-            except ValueError:
-                duration = 10
-
-            modifier.monitor_memory_changes(duration)
+            changer.find_money_address()
 
         elif choice == "0":
             print("Закрытие программы...")
-            modifier.disconnect()
+            changer.disconnect()
             break
 
         else:
