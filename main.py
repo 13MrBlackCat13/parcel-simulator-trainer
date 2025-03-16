@@ -7,6 +7,366 @@ import ctypes
 import keyboard
 import threading
 import binascii
+import locale
+from typing import Dict, Any
+
+
+# Global language settings
+class Language:
+    ENGLISH = 'en'
+    RUSSIAN = 'ru'
+    GERMAN = 'de'
+
+    # Default language
+    current = None
+
+    # Translation dictionaries
+    translations = {
+        ENGLISH: {
+            'title': 'Money Modifier for Parcel Simulator',
+            'version': 'Version 7.1 - With Signatures and Multilanguage Support',
+            'connecting': 'Connecting to the game {}...',
+            'connection_success': 'Successfully connected to the game! (Process ID: {})',
+            'process_not_found': 'Process {} not found.',
+            'ensure_game_running': 'Make sure the game is running and try again.',
+            'connection_error': 'Error connecting to the game: {}',
+            'searching_money_address': 'Searching for money address in game memory...',
+            'loading_from_saved': 'Trying to load saved data...',
+            'loaded_addresses': 'Loaded {} saved addresses.',
+            'address_value': 'Address {}: value = {}',
+            'found_valid_addresses': 'Found {} valid addresses.',
+            'current_money': 'Current amount of money: {}',
+            'no_valid_addresses': 'None of the saved addresses are valid.',
+            'using_signatures': 'Trying to use saved signatures...',
+            'address_by_signature': 'Found address {} by signature {}: value = {}',
+            'addresses_by_signatures': 'Successfully found {} addresses by signatures.',
+            'no_addresses_signatures': 'Could not find valid addresses or signatures.',
+            'load_error': 'Error loading data: {}',
+            'data_saved': 'Data saved to file {}',
+            'save_error': 'Error saving data: {}',
+            'creating_signature': 'Creating signature for money address...',
+            'signature_created': 'Signature successfully created!',
+            'no_addresses_to_check': 'No addresses to check.',
+            'checking_addresses': 'Checking {} addresses...',
+            'checking_group': 'Checking group {}/{}',
+            'current_value': 'current value = {}',
+            'read_error': 'read error',
+            'value_set': 'Value set to {}.',
+            'check_money_changed': 'Check if the money amount changed in the game.',
+            'money_changed': 'Did the money change? (y/n): ',
+            'address_confirmed': 'Address {} confirmed!',
+            'group_has_addresses': 'Group contains target addresses! Checking each address separately...',
+            'address_set_value': 'Address {}: value set to {}.',
+            'write_error': 'Error writing to address {}: {}',
+            'check_complete': 'Check completed. Found {} confirmed addresses.',
+            'data_loaded': 'Successfully loaded saved data.',
+            'creating_signatures': 'Found addresses, but no signatures. Creating them...',
+            'diff_scan_intro': '\nThe differential scanning method will be used to find the money address.',
+            'diff_scan_explain': 'This method can find the address even if it changes when restarting the game.',
+            'enter_current_money': 'Enter the current amount of money in the game: ',
+            'invalid_input': 'Invalid input. Enter a number.',
+            'first_scan': 'Performing first scan...',
+            'no_int_addresses': 'No addresses with integer value found. Trying Float...',
+            'no_addresses_found': 'Could not find addresses. The game may use a non-standard data format.',
+            'too_many_addresses': '\nToo many addresses found. Please do the following:',
+            'change_money_instruct': '1. Change the amount of money in game (earn or spend some)',
+            'enter_new_value_instruct': '2. Enter the new money value',
+            'enter_new_money': 'Enter the new amount of money after change: ',
+            'still_many_addresses': '\nStill too many addresses. Performing change scan.',
+            'change_money_please': 'Please change the amount of money in the game (earn or spend).',
+            'press_enter_when_done': 'Press Enter when done...',
+            'address_changed': 'Address {}: {} -> {}',
+            'address_increased': 'Address {}: {} -> {} (increased)',
+            'address_decreased': 'Address {}: {} -> {} (decreased)',
+            'addresses_after_filter': 'Remaining {} addresses after filtering',
+            'testing_addresses': '\nTesting found addresses with test value {}...',
+            'finding_signatures': 'Creating signatures for found addresses...',
+            'no_confirmed_addresses': 'Could not confirm money addresses.',
+            'money_address_not_found': 'Money address not found. First perform a search.',
+            'value_changed': 'Value successfully changed at address {}',
+            'change_failed': 'Could not change value at any address.',
+            'money_not_found': 'Could not find money address. The game may use a non-standard data format.',
+            'admin_required': 'This program requires administrator rights to access game memory.',
+            'run_as_admin': 'Please run the program as administrator.',
+            'press_to_exit': 'Press Enter to exit...',
+            'menu_title': '=== Menu ===',
+            'change_money': '1. Change money amount',
+            'find_address_again': '2. Find money address again',
+            'language_menu': '3. Change language',
+            'exit': '0. Exit',
+            'select_action': 'Select action: ',
+            'enter_new_money_amount': 'Enter new amount of money: ',
+            'money_changed_success': 'Money successfully changed!',
+            'change_failed': 'Failed to change money.',
+            'invalid_choice': 'Invalid choice. Try again.',
+            'closing': 'Closing program...',
+            'disconnected': 'Disconnected from game process.',
+            'select_language': 'Select language:',
+            'en_lang': '1. English',
+            'ru_lang': '2. Russian',
+            'de_lang': '3. German',
+            'language_changed': 'Language changed to {}',
+            'finding_regions': 'Looking for available memory regions...',
+            'regions_found': 'Found {} available memory regions',
+            'starting_first_scan': 'Starting first scan for value {}...',
+            'press_esc': 'Press ESC to stop scanning',
+            'stop_command': '\nReceived command to stop scanning',
+            'scan_progress': 'Progress: {:.1f}% | Region {}/{} | Found: {}',
+            'scan_complete': '\nScan completed in {:.2f} seconds',
+            'scan_found': 'Found {} addresses with value {}',
+            'filtering_results': 'Filtering results for value {}...',
+            'remaining_addresses': 'Remaining {} addresses with value {}',
+            'no_previous_results': 'No results from previous scan',
+            'filtering_by_change': 'Filtering results by value change ({})...',
+            'finding_signature': 'Searching for signature in memory...',
+            'signature_found': 'Found signature at address {}',
+            'signature_error': 'Error processing signature: {}',
+            'esc_scan_stop': 'Scanning stopped by user.',
+        },
+        RUSSIAN: {
+            'title': 'Модификатор денег для Parcel Simulator',
+            'version': 'Версия 7.1 - С сигнатурами и многоязычной поддержкой',
+            'connecting': 'Подключение к игре {}...',
+            'connection_success': 'Успешно подключились к игре! (ID процесса: {})',
+            'process_not_found': 'Процесс {} не найден.',
+            'ensure_game_running': 'Убедитесь, что игра запущена и попробуйте снова.',
+            'connection_error': 'Ошибка при подключении к игре: {}',
+            'searching_money_address': 'Поиск адреса денег в памяти игры...',
+            'loading_from_saved': 'Пробуем загрузить сохраненные данные...',
+            'loaded_addresses': 'Загружено {} сохраненных адресов.',
+            'address_value': 'Адрес {}: значение = {}',
+            'found_valid_addresses': 'Найдено {} действительных адресов.',
+            'current_money': 'Текущее количество денег: {}',
+            'no_valid_addresses': 'Ни один из сохраненных адресов не действителен.',
+            'using_signatures': 'Пробуем использовать сохраненные сигнатуры...',
+            'address_by_signature': 'Найден адрес {} по сигнатуре {}: значение = {}',
+            'addresses_by_signatures': 'Успешно найдено {} адресов по сигнатурам.',
+            'no_addresses_signatures': 'Не удалось найти действующие адреса или сигнатуры.',
+            'load_error': 'Ошибка при загрузке данных: {}',
+            'data_saved': 'Данные сохранены в файл {}',
+            'save_error': 'Ошибка при сохранении данных: {}',
+            'creating_signature': 'Создание сигнатуры для адреса денег...',
+            'signature_created': 'Сигнатура успешно создана!',
+            'no_addresses_to_check': 'Нет адресов для проверки.',
+            'checking_addresses': 'Проверка {} адресов...',
+            'checking_group': 'Проверка группы {}/{}',
+            'current_value': 'текущее значение = {}',
+            'read_error': 'ошибка чтения',
+            'value_set': 'Установлено значение {}.',
+            'check_money_changed': 'Проверьте, изменилось ли количество денег в игре.',
+            'money_changed': 'Деньги изменились? (y/n): ',
+            'address_confirmed': 'Адрес {} подтвержден!',
+            'group_has_addresses': 'Группа содержит нужные адреса! Проверяем каждый адрес отдельно...',
+            'address_set_value': 'Адрес {}: установлено значение {}.',
+            'write_error': 'Ошибка при записи в адрес {}: {}',
+            'check_complete': 'Проверка завершена. Найдено {} подтвержденных адресов.',
+            'data_loaded': 'Успешно загружены сохраненные данные.',
+            'creating_signatures': 'Найдены адреса, но нет сигнатур. Создаем их...',
+            'diff_scan_intro': '\nДля поиска адреса денег будет использован метод дифференциального сканирования.',
+            'diff_scan_explain': 'Этот метод позволяет найти адрес, даже если он меняется при перезапуске игры.',
+            'enter_current_money': 'Введите текущее количество денег в игре: ',
+            'invalid_input': 'Неверный ввод. Введите число.',
+            'first_scan': 'Выполняем первое сканирование...',
+            'no_int_addresses': 'Не найдено адресов с целочисленным значением. Пробуем Float...',
+            'no_addresses_found': 'Не удалось найти адреса. Возможно, игра использует нестандартный формат данных.',
+            'too_many_addresses': '\nНайдено слишком много адресов. Выполните следующие действия:',
+            'change_money_instruct': '1. Измените количество денег в игре (заработайте или потратьте немного)',
+            'enter_new_value_instruct': '2. Введите новое значение денег',
+            'enter_new_money': 'Введите новое количество денег после изменения: ',
+            'still_many_addresses': '\nВсё еще много адресов. Выполним сканирование по изменению.',
+            'change_money_please': 'Пожалуйста, измените значение денег в игре (заработайте или потратьте).',
+            'press_enter_when_done': 'Нажмите Enter, когда изменение будет выполнено...',
+            'address_changed': 'Адрес {}: {} -> {}',
+            'address_increased': 'Адрес {}: {} -> {} (увеличилось)',
+            'address_decreased': 'Адрес {}: {} -> {} (уменьшилось)',
+            'addresses_after_filter': 'Осталось {} адресов после фильтрации',
+            'testing_addresses': '\nПроверка найденных адресов с тестовым значением {}...',
+            'finding_signatures': 'Создание сигнатур для найденных адресов...',
+            'no_confirmed_addresses': 'Не удалось подтвердить адреса денег.',
+            'money_address_not_found': 'Адрес денег не найден. Сначала выполните поиск.',
+            'value_changed': 'Значение успешно изменено по адресу {}',
+            'change_failed': 'Не удалось изменить значение ни по одному адресу.',
+            'money_not_found': 'Не удалось найти адрес денег. Возможно, игра использует нестандартный формат данных.',
+            'admin_required': 'Эта программа требует прав администратора для доступа к памяти игры.',
+            'run_as_admin': 'Пожалуйста, запустите программу от имени администратора.',
+            'press_to_exit': 'Нажмите Enter для выхода...',
+            'menu_title': '=== Меню ===',
+            'change_money': '1. Изменить количество денег',
+            'find_address_again': '2. Найти адрес денег заново',
+            'language_menu': '3. Изменить язык',
+            'exit': '0. Выход',
+            'select_action': 'Выберите действие: ',
+            'enter_new_money_amount': 'Введите новое количество денег: ',
+            'money_changed_success': 'Деньги успешно изменены!',
+            'change_failed': 'Не удалось изменить деньги.',
+            'invalid_choice': 'Неверный выбор. Попробуйте снова.',
+            'closing': 'Закрытие программы...',
+            'disconnected': 'Отключено от процесса игры.',
+            'select_language': 'Выберите язык:',
+            'en_lang': '1. Английский',
+            'ru_lang': '2. Русский',
+            'de_lang': '3. Немецкий',
+            'language_changed': 'Язык изменен на {}',
+            'finding_regions': 'Поиск доступных регионов памяти...',
+            'regions_found': 'Найдено {} доступных регионов памяти',
+            'starting_first_scan': 'Начинаем первое сканирование для значения {}...',
+            'press_esc': 'Нажмите ESC для остановки сканирования',
+            'stop_command': '\nПолучена команда на остановку сканирования',
+            'scan_progress': 'Прогресс: {:.1f}% | Регион {}/{} | Найдено: {}',
+            'scan_complete': '\nСканирование завершено за {:.2f} секунд',
+            'scan_found': 'Найдено {} адресов со значением {}',
+            'filtering_results': 'Фильтрация результатов для значения {}...',
+            'remaining_addresses': 'Осталось {} адресов со значением {}',
+            'no_previous_results': 'Нет результатов предыдущего сканирования',
+            'filtering_by_change': 'Фильтрация результатов по изменению значения ({})...',
+            'finding_signature': 'Поиск сигнатуры в памяти...',
+            'signature_found': 'Найдена сигнатура по адресу {}',
+            'signature_error': 'Ошибка при обработке сигнатуры: {}',
+            'esc_scan_stop': 'Сканирование остановлено пользователем.',
+        },
+        GERMAN: {
+            'title': 'Geldmodifikator für Parcel Simulator',
+            'version': 'Version 7.1 - Mit Signaturen und mehrsprachiger Unterstützung',
+            'connecting': 'Verbindung zum Spiel {} wird hergestellt...',
+            'connection_success': 'Erfolgreich mit dem Spiel verbunden! (Prozess-ID: {})',
+            'process_not_found': 'Prozess {} nicht gefunden.',
+            'ensure_game_running': 'Stellen Sie sicher, dass das Spiel läuft, und versuchen Sie es erneut.',
+            'connection_error': 'Fehler beim Verbinden mit dem Spiel: {}',
+            'searching_money_address': 'Suche nach Geldadresse im Spielspeicher...',
+            'loading_from_saved': 'Versuche, gespeicherte Daten zu laden...',
+            'loaded_addresses': '{} gespeicherte Adressen geladen.',
+            'address_value': 'Adresse {}: Wert = {}',
+            'found_valid_addresses': '{} gültige Adressen gefunden.',
+            'current_money': 'Aktueller Geldbetrag: {}',
+            'no_valid_addresses': 'Keine der gespeicherten Adressen ist gültig.',
+            'using_signatures': 'Versuche, gespeicherte Signaturen zu verwenden...',
+            'address_by_signature': 'Adresse {} durch Signatur {} gefunden: Wert = {}',
+            'addresses_by_signatures': 'Erfolgreich {} Adressen anhand von Signaturen gefunden.',
+            'no_addresses_signatures': 'Es konnten keine gültigen Adressen oder Signaturen gefunden werden.',
+            'load_error': 'Fehler beim Laden von Daten: {}',
+            'data_saved': 'Daten in Datei {} gespeichert',
+            'save_error': 'Fehler beim Speichern der Daten: {}',
+            'creating_signature': 'Erstelle Signatur für Geldadresse...',
+            'signature_created': 'Signatur erfolgreich erstellt!',
+            'no_addresses_to_check': 'Keine Adressen zu überprüfen.',
+            'checking_addresses': 'Überprüfe {} Adressen...',
+            'checking_group': 'Überprüfe Gruppe {}/{}',
+            'current_value': 'aktueller Wert = {}',
+            'read_error': 'Lesefehler',
+            'value_set': 'Wert auf {} gesetzt.',
+            'check_money_changed': 'Prüfen Sie, ob sich der Geldbetrag im Spiel geändert hat.',
+            'money_changed': 'Hat sich das Geld geändert? (y/n): ',
+            'address_confirmed': 'Adresse {} bestätigt!',
+            'group_has_addresses': 'Gruppe enthält Zieladressen! Überprüfe jede Adresse einzeln...',
+            'address_set_value': 'Adresse {}: Wert auf {} gesetzt.',
+            'write_error': 'Fehler beim Schreiben an Adresse {}: {}',
+            'check_complete': 'Überprüfung abgeschlossen. {} bestätigte Adressen gefunden.',
+            'data_loaded': 'Gespeicherte Daten erfolgreich geladen.',
+            'creating_signatures': 'Adressen gefunden, aber keine Signaturen. Erstelle sie...',
+            'diff_scan_intro': '\nDie Differenzial-Scan-Methode wird verwendet, um die Geldadresse zu finden.',
+            'diff_scan_explain': 'Diese Methode kann die Adresse finden, auch wenn sie sich beim Neustart des Spiels ändert.',
+            'enter_current_money': 'Geben Sie den aktuellen Geldbetrag im Spiel ein: ',
+            'invalid_input': 'Ungültige Eingabe. Geben Sie eine Zahl ein.',
+            'first_scan': 'Führe ersten Scan durch...',
+            'no_int_addresses': 'Keine Adressen mit ganzzahligem Wert gefunden. Versuche Float...',
+            'no_addresses_found': 'Keine Adressen gefunden. Das Spiel verwendet möglicherweise ein nicht standardmäßiges Datenformat.',
+            'too_many_addresses': '\nZu viele Adressen gefunden. Bitte führen Sie folgende Schritte aus:',
+            'change_money_instruct': '1. Ändern Sie den Geldbetrag im Spiel (verdienen oder geben Sie etwas aus)',
+            'enter_new_value_instruct': '2. Geben Sie den neuen Geldwert ein',
+            'enter_new_money': 'Geben Sie den neuen Geldbetrag nach der Änderung ein: ',
+            'still_many_addresses': '\nImmer noch zu viele Adressen. Führe einen Änderungsscan durch.',
+            'change_money_please': 'Bitte ändern Sie den Geldbetrag im Spiel (verdienen oder ausgeben).',
+            'press_enter_when_done': 'Drücken Sie Enter, wenn Sie fertig sind...',
+            'address_changed': 'Adresse {}: {} -> {}',
+            'address_increased': 'Adresse {}: {} -> {} (erhöht)',
+            'address_decreased': 'Adresse {}: {} -> {} (verringert)',
+            'addresses_after_filter': 'Verbleibende {} Adressen nach Filterung',
+            'testing_addresses': '\nTeste gefundene Adressen mit Testwert {}...',
+            'finding_signatures': 'Erstelle Signaturen für gefundene Adressen...',
+            'no_confirmed_addresses': 'Konnte keine Geldadressen bestätigen.',
+            'money_address_not_found': 'Geldadresse nicht gefunden. Führen Sie zuerst eine Suche durch.',
+            'value_changed': 'Wert erfolgreich an Adresse {} geändert',
+            'change_failed': 'Konnte den Wert an keiner Adresse ändern.',
+            'money_not_found': 'Konnte Geldadresse nicht finden. Das Spiel verwendet möglicherweise ein nicht standardmäßiges Datenformat.',
+            'admin_required': 'Dieses Programm benötigt Administratorrechte, um auf den Spielspeicher zuzugreifen.',
+            'run_as_admin': 'Bitte führen Sie das Programm als Administrator aus.',
+            'press_to_exit': 'Drücken Sie Enter zum Beenden...',
+            'menu_title': '=== Menü ===',
+            'change_money': '1. Geldbetrag ändern',
+            'find_address_again': '2. Geldadresse erneut suchen',
+            'language_menu': '3. Sprache ändern',
+            'exit': '0. Beenden',
+            'select_action': 'Aktion auswählen: ',
+            'enter_new_money_amount': 'Neuen Geldbetrag eingeben: ',
+            'money_changed_success': 'Geld erfolgreich geändert!',
+            'change_failed': 'Geldänderung fehlgeschlagen.',
+            'invalid_choice': 'Ungültige Auswahl. Versuchen Sie es erneut.',
+            'closing': 'Programm wird geschlossen...',
+            'disconnected': 'Verbindung zum Spielprozess getrennt.',
+            'select_language': 'Sprache auswählen:',
+            'en_lang': '1. Englisch',
+            'ru_lang': '2. Russisch',
+            'de_lang': '3. Deutsch',
+            'language_changed': 'Sprache auf {} geändert',
+            'finding_regions': 'Suche nach verfügbaren Speicherbereichen...',
+            'regions_found': '{} verfügbare Speicherbereiche gefunden',
+            'starting_first_scan': 'Starte ersten Scan für Wert {}...',
+            'press_esc': 'Drücken Sie ESC, um den Scan zu beenden',
+            'stop_command': '\nBefehl zum Stoppen des Scans erhalten',
+            'scan_progress': 'Fortschritt: {:.1f}% | Region {}/{} | Gefunden: {}',
+            'scan_complete': '\nScan in {:.2f} Sekunden abgeschlossen',
+            'scan_found': '{} Adressen mit Wert {} gefunden',
+            'filtering_results': 'Filtere Ergebnisse für Wert {}...',
+            'remaining_addresses': 'Verbleibende {} Adressen mit Wert {}',
+            'no_previous_results': 'Keine Ergebnisse vom vorherigen Scan',
+            'filtering_by_change': 'Filtere Ergebnisse nach Wertänderung ({})...',
+            'finding_signature': 'Suche nach Signatur im Speicher...',
+            'signature_found': 'Signatur an Adresse {} gefunden',
+            'signature_error': 'Fehler bei der Verarbeitung der Signatur: {}',
+            'esc_scan_stop': 'Scannen wurde vom Benutzer gestoppt.',
+        }
+    }
+
+    @classmethod
+    def get_system_language(cls):
+        """Detect system language and return the closest supported language"""
+        try:
+            system_locale = locale.getdefaultlocale()[0].lower()
+            if system_locale.startswith('ru'):
+                return cls.RUSSIAN
+            elif system_locale.startswith('de'):
+                return cls.GERMAN
+            else:
+                return cls.ENGLISH
+        except:
+            return cls.ENGLISH
+
+    @classmethod
+    def initialize(cls):
+        """Initialize language settings"""
+        cls.current = cls.get_system_language()
+
+    @classmethod
+    def set_language(cls, lang_code):
+        """Set current language"""
+        if lang_code in [cls.ENGLISH, cls.RUSSIAN, cls.GERMAN]:
+            cls.current = lang_code
+
+    @classmethod
+    def get(cls, key, *args):
+        """Get translated string by key with optional formatting"""
+        if cls.current is None:
+            cls.initialize()
+
+        # Get the string from the current language or fallback to English
+        text = cls.translations.get(cls.current, {}).get(key)
+        if text is None:
+            text = cls.translations.get(cls.ENGLISH, {}).get(key, key)
+
+        # Apply formatting if args are provided
+        if args:
+            return text.format(*args)
+        return text
 
 
 # Проверка прав администратора
@@ -44,7 +404,7 @@ class SignatureScanner:
 
             return signature
         except Exception as e:
-            print(f"Ошибка при создании сигнатуры: {str(e)}")
+            print(Language.get('signature_error', str(e)))
             return None
 
     # Находит адрес по сигнатуре
@@ -58,7 +418,7 @@ class SignatureScanner:
             pattern = binascii.unhexlify(signature['bytes'])
             offset = signature.get('offset', 0)
         except Exception as e:
-            print(f"Ошибка при обработке сигнатуры: {str(e)}")
+            print(Language.get('signature_error', str(e)))
             return None
 
         # Получаем регионы памяти для сканирования
@@ -90,7 +450,7 @@ class SignatureScanner:
                     if address > 0x7FFFFFFFFFFF:
                         break
 
-        print("Поиск сигнатуры в памяти...")
+        print(Language.get('finding_signature'))
 
         # Сканируем регионы памяти на наличие сигнатуры
         for base_addr, region_size in memory_regions:
@@ -103,7 +463,7 @@ class SignatureScanner:
                 if pos != -1:
                     # Сигнатура найдена! Вычисляем адрес с учетом смещения
                     result_addr = base_addr + pos + offset
-                    print(f"Найдена сигнатура по адресу {hex(result_addr)}")
+                    print(Language.get('signature_found', hex(result_addr)))
                     return result_addr
 
             except Exception:
@@ -170,7 +530,7 @@ class DifferentialMemoryScanner:
         regions = []
         address = 0
 
-        print("Поиск доступных регионов памяти...")
+        print(Language.get('finding_regions'))
 
         while True:
             try:
@@ -195,7 +555,7 @@ class DifferentialMemoryScanner:
                     break
 
         self.memory_regions = regions
-        print(f"Найдено {len(regions)} доступных регионов памяти")
+        print(Language.get('regions_found', len(regions)))
 
     # Первое сканирование - поиск значения
     def first_scan(self, value, data_type=MemoryDataType.INT32):
@@ -205,16 +565,16 @@ class DifferentialMemoryScanner:
         size = MemoryDataType.get_size(data_type)
         value_bytes = MemoryDataType.pack_value(value, data_type)
 
-        print(f"Начинаем первое сканирование для значения {value}...")
+        print(Language.get('starting_first_scan', value))
 
         # Создаем поток для обработки нажатия ESC
         self.stop_scan = False
 
         def check_for_esc():
-            print("Нажмите ESC для остановки сканирования")
+            print(Language.get('press_esc'))
             while True:
                 if keyboard.is_pressed('esc'):
-                    print("\nПолучена команда на остановку сканирования")
+                    print(Language.get('stop_command'))
                     self.stop_scan = True
                     break
                 time.sleep(0.1)
@@ -229,6 +589,7 @@ class DifferentialMemoryScanner:
         # Сканируем регионы памяти
         for i, (base_addr, region_size) in enumerate(self.memory_regions):
             if self.stop_scan:
+                print(Language.get('esc_scan_stop'))
                 break
 
             try:
@@ -236,9 +597,8 @@ class DifferentialMemoryScanner:
                 if i % 10 == 0:
                     elapsed = time.time() - start_time
                     progress = (i / len(self.memory_regions)) * 100
-                    print(
-                        f"\rПрогресс: {progress:.1f}% | Регион {i + 1}/{len(self.memory_regions)} | Найдено: {len(addresses)}",
-                        end="")
+                    print(Language.get('scan_progress', progress, i + 1, len(self.memory_regions), len(addresses)),
+                          end="\r")
 
                 # Читаем регион памяти
                 buffer = pymem.memory.read_bytes(self.process_handle, base_addr, region_size)
@@ -259,8 +619,8 @@ class DifferentialMemoryScanner:
                 continue
 
         elapsed = time.time() - start_time
-        print(f"\nСканирование завершено за {elapsed:.2f} секунд")
-        print(f"Найдено {len(addresses)} адресов со значением {value}")
+        print(Language.get('scan_complete', elapsed))
+        print(Language.get('scan_found', len(addresses), value))
 
         self.scan_results = addresses
         return addresses
@@ -268,10 +628,10 @@ class DifferentialMemoryScanner:
     # Следующее сканирование - фильтрация результатов
     def next_scan(self, value, data_type=MemoryDataType.INT32):
         if not self.scan_results:
-            print("Нет результатов предыдущего сканирования")
+            print(Language.get('no_previous_results'))
             return []
 
-        print(f"Фильтрация результатов для значения {value}...")
+        print(Language.get('filtering_results', value))
 
         size = MemoryDataType.get_size(data_type)
         matching_addresses = []
@@ -289,7 +649,7 @@ class DifferentialMemoryScanner:
                 # Пропускаем ошибки чтения памяти
                 continue
 
-        print(f"Осталось {len(matching_addresses)} адресов со значением {value}")
+        print(Language.get('remaining_addresses', len(matching_addresses), value))
 
         self.scan_results = matching_addresses
         return matching_addresses
@@ -297,10 +657,10 @@ class DifferentialMemoryScanner:
     # Сканирование с учетом изменений
     def changed_value_scan(self, change_type="changed"):
         if not self.scan_results:
-            print("Нет результатов предыдущего сканирования")
+            print(Language.get('no_previous_results'))
             return []
 
-        print(f"Фильтрация результатов по изменению значения ({change_type})...")
+        print(Language.get('filtering_by_change', change_type))
 
         # Сохраняем текущие значения
         current_values = {}
@@ -314,8 +674,8 @@ class DifferentialMemoryScanner:
                 continue
 
         # Просим пользователя изменить значение в игре
-        print("Пожалуйста, измените значение денег в игре (заработайте или потратьте).")
-        input("Нажмите Enter, когда изменение будет выполнено...")
+        print(Language.get('change_money_please'))
+        input(Language.get('press_enter_when_done'))
 
         # Проверяем, какие значения изменились
         matching_addresses = []
@@ -328,18 +688,18 @@ class DifferentialMemoryScanner:
                 # Проверяем условие изменения
                 if change_type == "changed" and old_value != new_value:
                     matching_addresses.append(addr)
-                    print(f"Адрес {hex(addr)}: {old_value} -> {new_value}")
+                    print(Language.get('address_changed', hex(addr), old_value, new_value))
                 elif change_type == "increased" and new_value > old_value:
                     matching_addresses.append(addr)
-                    print(f"Адрес {hex(addr)}: {old_value} -> {new_value} (увеличилось)")
+                    print(Language.get('address_increased', hex(addr), old_value, new_value))
                 elif change_type == "decreased" and new_value < old_value:
                     matching_addresses.append(addr)
-                    print(f"Адрес {hex(addr)}: {old_value} -> {new_value} (уменьшилось)")
+                    print(Language.get('address_decreased', hex(addr), old_value, new_value))
             except Exception as e:
                 # Пропускаем ошибки чтения памяти
                 continue
 
-        print(f"Осталось {len(matching_addresses)} адресов после фильтрации")
+        print(Language.get('addresses_after_filter', len(matching_addresses)))
 
         self.scan_results = matching_addresses
         return matching_addresses
@@ -362,10 +722,10 @@ class MoneyChanger:
     # Подключение к процессу игры
     def connect_to_game(self):
         try:
-            print(f"Подключение к игре {self.display_name}...")
+            print(Language.get('connecting', self.display_name))
             self.pm = pymem.Pymem(self.process_name)
             self.process_handle = self.pm.process_handle
-            print(f"Успешно подключились к игре! (ID процесса: {self.pm.process_id})")
+            print(Language.get('connection_success', self.pm.process_id))
 
             # Создаем сканеры
             self.scanner = DifferentialMemoryScanner(self.process_handle)
@@ -373,11 +733,11 @@ class MoneyChanger:
 
             return True
         except pymem.exception.ProcessNotFound:
-            print(f"Процесс {self.process_name} не найден.")
-            print("Убедитесь, что игра запущена и попробуйте снова.")
+            print(Language.get('process_not_found', self.process_name))
+            print(Language.get('ensure_game_running'))
             return False
         except Exception as e:
-            print(f"Ошибка при подключении к игре: {str(e)}")
+            print(Language.get('connection_error', str(e)))
             return False
 
     # Загрузка сохраненных данных
@@ -392,7 +752,7 @@ class MoneyChanger:
                 # Загружаем адреса
                 if 'addresses' in data:
                     addresses = [int(addr, 16) for addr in data['addresses']]
-                    print(f"Загружено {len(addresses)} сохраненных адресов.")
+                    print(Language.get('loaded_addresses', len(addresses)))
 
                     # Проверяем валидность адресов
                     valid_addresses = []
@@ -401,18 +761,18 @@ class MoneyChanger:
                             value = self.pm.read_int(addr)
                             if 0 <= value <= 10000000:  # Разумный диапазон для денег
                                 valid_addresses.append(addr)
-                                print(f"Адрес {hex(addr)}: значение = {value}")
+                                print(Language.get('address_value', hex(addr), value))
                         except:
                             continue
 
                     if valid_addresses:
                         self.money_addresses = valid_addresses
-                        print(f"Найдено {len(valid_addresses)} действительных адресов.")
+                        print(Language.get('found_valid_addresses', len(valid_addresses)))
 
                         # Считываем текущее значение денег
                         try:
                             self.current_money = self.pm.read_int(valid_addresses[0])
-                            print(f"Текущее количество денег: {self.current_money}")
+                            print(Language.get('current_money', self.current_money))
                         except:
                             pass
 
@@ -420,7 +780,7 @@ class MoneyChanger:
 
                 # Пробуем использовать сигнатуры
                 if 'signatures' in data and not self.money_addresses:
-                    print("Пробуем использовать сохраненные сигнатуры...")
+                    print(Language.get('using_signatures'))
                     self.signatures = data['signatures']
 
                     for i, signature in enumerate(self.signatures):
@@ -433,19 +793,19 @@ class MoneyChanger:
                                 if 0 <= value <= 10000000:  # Проверка на разумное значение
                                     self.money_addresses.append(addr)
                                     self.current_money = value
-                                    print(f"Найден адрес {hex(addr)} по сигнатуре {i + 1}: значение = {value}")
+                                    print(Language.get('address_by_signature', hex(addr), i + 1, value))
                             except:
                                 pass
 
                     if self.money_addresses:
-                        print(f"Успешно найдено {len(self.money_addresses)} адресов по сигнатурам.")
+                        print(Language.get('addresses_by_signatures', len(self.money_addresses)))
                         return True
 
-            print("Не удалось найти действующие адреса или сигнатуры.")
+            print(Language.get('no_addresses_signatures'))
             return False
 
         except Exception as e:
-            print(f"Ошибка при загрузке данных: {str(e)}")
+            print(Language.get('load_error', str(e)))
             return False
 
     # Сохранение данных
@@ -460,18 +820,18 @@ class MoneyChanger:
             with open(self.save_file, 'w') as f:
                 json.dump(data, f, indent=4)
 
-            print(f"Данные сохранены в файл {self.save_file}")
+            print(Language.get('data_saved', self.save_file))
         except Exception as e:
-            print(f"Ошибка при сохранении данных: {str(e)}")
+            print(Language.get('save_error', str(e)))
 
     # Создание сигнатур
     def create_signature(self, address):
         # Создаем сигнатуру
-        print("Создание сигнатуры для адреса денег...")
+        print(Language.get('creating_signature'))
         signature = self.signature_scanner.create_signature(address)
         if signature:
             self.signatures.append(signature)
-            print("Сигнатура успешно создана!")
+            print(Language.get('signature_created'))
 
         # Сохраняем данные
         self.save_data()
@@ -479,7 +839,7 @@ class MoneyChanger:
     # Проверка адресов путем изменения значения
     def verify_addresses(self, addresses, test_value):
         if not addresses:
-            print("Нет адресов для проверки.")
+            print(Language.get('no_addresses_to_check'))
             return []
 
         # Группируем адреса для проверки (если их много)
@@ -491,7 +851,7 @@ class MoneyChanger:
         if len(addresses) <= 5:
             grouped_addresses = [[addr] for addr in addresses]
 
-        print(f"Проверка {len(addresses)} адресов...")
+        print(Language.get('checking_addresses', len(addresses)))
 
         # Сохраняем оригинальные значения
         original_values = {}
@@ -505,15 +865,15 @@ class MoneyChanger:
 
         # Проверяем каждую группу или отдельный адрес
         for i, group in enumerate(grouped_addresses):
-            print(f"\nПроверка группы {i + 1}/{len(grouped_addresses)} ({len(group)} адресов)")
+            print(f"\n{Language.get('checking_group', i + 1, len(grouped_addresses))}")
 
             # Выводим адреса группы
             for addr in group:
                 try:
                     current_value = self.pm.read_int(addr)
-                    print(f"  {hex(addr)}: текущее значение = {current_value}")
+                    print(f"  {hex(addr)}: {Language.get('current_value', current_value)}")
                 except:
-                    print(f"  {hex(addr)}: ошибка чтения")
+                    print(f"  {hex(addr)}: {Language.get('read_error')}")
 
             # Изменяем значения всех адресов в группе
             for addr in group:
@@ -521,22 +881,22 @@ class MoneyChanger:
                     if addr in original_values:
                         self.pm.write_int(addr, test_value)
                 except Exception as e:
-                    print(f"Ошибка при записи в адрес {hex(addr)}: {str(e)}")
+                    print(Language.get('write_error', hex(addr), str(e)))
 
-            print(f"Установлено значение {test_value}.")
-            print("Проверьте, изменилось ли количество денег в игре.")
+            print(Language.get('value_set', test_value))
+            print(Language.get('check_money_changed'))
 
             # Спрашиваем пользователя, изменились ли деньги
-            response = input("Деньги изменились? (y/n): ").lower()
+            response = input(Language.get('money_changed')).lower()
 
             if response == 'y':
                 # Если группа содержит только один адрес, просто добавляем его
                 if len(group) == 1:
                     verified_addresses.append(group[0])
-                    print(f"Адрес {hex(group[0])} подтвержден!")
+                    print(Language.get('address_confirmed', hex(group[0])))
                 else:
                     # Проверяем каждый адрес в группе отдельно
-                    print("Группа содержит нужные адреса! Проверяем каждый адрес отдельно...")
+                    print(Language.get('group_has_addresses'))
 
                     # Восстанавливаем все значения
                     for addr, value in original_values.items():
@@ -555,19 +915,19 @@ class MoneyChanger:
                             orig_value = original_values[addr]
                             self.pm.write_int(addr, test_value)
 
-                            print(f"Адрес {hex(addr)}: установлено значение {test_value}.")
-                            print("Проверьте, изменилось ли количество денег в игре.")
+                            print(Language.get('address_set_value', hex(addr), test_value))
+                            print(Language.get('check_money_changed'))
 
-                            resp = input("Деньги изменились? (y/n): ").lower()
+                            resp = input(Language.get('money_changed')).lower()
                             if resp == 'y':
                                 verified_addresses.append(addr)
-                                print(f"Адрес {hex(addr)} подтвержден!")
+                                print(Language.get('address_confirmed', hex(addr)))
 
                             # Восстанавливаем значение
                             self.pm.write_int(addr, orig_value)
 
                         except Exception as e:
-                            print(f"Ошибка при проверке адреса {hex(addr)}: {str(e)}")
+                            print(Language.get('write_error', hex(addr), str(e)))
 
             # Восстанавливаем оригинальные значения для всей группы
             for addr in group:
@@ -577,57 +937,57 @@ class MoneyChanger:
                     except:
                         continue
 
-        print(f"\nПроверка завершена. Найдено {len(verified_addresses)} подтвержденных адресов.")
+        print(f"\n{Language.get('check_complete', len(verified_addresses))}")
         return verified_addresses
 
     # Поиск адреса денег
     def find_money_address(self):
-        print("Поиск адреса денег в памяти игры...")
+        print(Language.get('searching_money_address'))
 
         # Сначала пробуем загрузить сохраненные данные
         if self.load_saved_data():
-            print("Успешно загружены сохраненные данные.")
+            print(Language.get('data_loaded'))
 
             # Если найдены адреса, но нет сигнатур, создаем их
             if self.money_addresses and not self.signatures:
-                print("Найдены адреса, но нет сигнатур. Создаем их...")
+                print(Language.get('creating_signatures'))
                 self.create_signature(self.money_addresses[0])
 
             return True
 
-        print("\nДля поиска адреса денег будет использован метод дифференциального сканирования.")
-        print("Этот метод позволяет найти адрес, даже если он меняется при перезапуске игры.")
+        print(Language.get('diff_scan_intro'))
+        print(Language.get('diff_scan_explain'))
 
         # Спрашиваем текущее значение денег
         try:
-            current_money = int(input("Введите текущее количество денег в игре: "))
+            current_money = int(input(Language.get('enter_current_money')))
         except ValueError:
-            print("Неверный ввод. Введите число.")
+            print(Language.get('invalid_input'))
             return False
 
         # Выполняем первое сканирование
-        print("Выполняем первое сканирование...")
+        print(Language.get('first_scan'))
         self.scanner.first_scan(current_money)
 
         if not self.scanner.scan_results:
             # Пробуем другие типы данных
-            print("Не найдено адресов с целочисленным значением. Пробуем Float...")
+            print(Language.get('no_int_addresses'))
             self.scanner.first_scan(current_money, MemoryDataType.FLOAT)
 
         if not self.scanner.scan_results:
-            print("Не удалось найти адреса. Возможно, игра использует нестандартный формат данных.")
+            print(Language.get('no_addresses_found'))
             return False
 
         # Если найдено слишком много адресов, фильтруем их с помощью дифференциального сканирования
         if len(self.scanner.scan_results) > 100:
-            print("\nНайдено слишком много адресов. Выполните следующие действия:")
-            print("1. Измените количество денег в игре (заработайте или потратьте немного)")
-            print("2. Введите новое значение денег")
+            print(Language.get('too_many_addresses'))
+            print(Language.get('change_money_instruct'))
+            print(Language.get('enter_new_value_instruct'))
 
             try:
-                new_money = int(input("Введите новое количество денег после изменения: "))
+                new_money = int(input(Language.get('enter_new_money')))
             except ValueError:
-                print("Неверный ввод. Введите число.")
+                print(Language.get('invalid_input'))
                 return False
 
             # Фильтруем результаты по новому значению
@@ -635,13 +995,13 @@ class MoneyChanger:
 
         # Если всё еще много адресов, используем сканирование по изменению
         if len(self.scanner.scan_results) > 20:
-            print("\nВсё еще много адресов. Выполним сканирование по изменению.")
+            print(Language.get('still_many_addresses'))
             self.scanner.changed_value_scan()
 
         # Проверяем найденные адреса
         if self.scanner.scan_results:
             test_value = current_money + 1000
-            print(f"\nПроверка найденных адресов с тестовым значением {test_value}...")
+            print(Language.get('testing_addresses', test_value))
 
             verified_addresses = self.verify_addresses(self.scanner.scan_results, test_value)
 
@@ -655,94 +1015,122 @@ class MoneyChanger:
 
                 return True
 
-        print("Не удалось подтвердить адреса денег.")
+        print(Language.get('no_confirmed_addresses'))
         return False
 
     # Изменение значения денег
     def change_money(self, new_value):
         if not self.money_addresses:
-            print("Адрес денег не найден. Сначала выполните поиск.")
+            print(Language.get('money_address_not_found'))
             return False
 
         success = False
         for addr in self.money_addresses:
             try:
                 self.pm.write_int(addr, new_value)
-                print(f"Значение успешно изменено по адресу {hex(addr)}")
+                print(Language.get('value_changed', hex(addr)))
                 success = True
             except Exception as e:
-                print(f"Ошибка при записи значения по адресу {hex(addr)}: {str(e)}")
+                print(Language.get('write_error', hex(addr), str(e)))
 
         if success:
             self.current_money = new_value
             return True
         else:
-            print("Не удалось изменить значение ни по одному адресу.")
+            print(Language.get('change_failed'))
             return False
 
     # Закрытие соединения с процессом
     def disconnect(self):
         if self.pm:
             self.pm.close_process()
-            print("Отключено от процесса игры.")
+            print(Language.get('disconnected'))
+
+
+# Функция для изменения языка
+def change_language():
+    print(Language.get('select_language'))
+    print(Language.get('en_lang'))
+    print(Language.get('ru_lang'))
+    print(Language.get('de_lang'))
+    choice = input(Language.get('select_action'))
+
+    if choice == '1':
+        Language.set_language(Language.ENGLISH)
+        print(Language.get('language_changed', 'English'))
+    elif choice == '2':
+        Language.set_language(Language.RUSSIAN)
+        print(Language.get('language_changed', 'Русский'))
+    elif choice == '3':
+        Language.set_language(Language.GERMAN)
+        print(Language.get('language_changed', 'Deutsch'))
+    else:
+        print(Language.get('invalid_choice'))
 
 
 # Основная функция
 def main():
+    # Инициализация языка
+    Language.initialize()
+
     # Проверка прав администратора
     if not is_admin():
-        print("Эта программа требует прав администратора для доступа к памяти игры.")
-        print("Пожалуйста, запустите программу от имени администратора.")
-        input("Нажмите Enter для выхода...")
+        print(Language.get('admin_required'))
+        print(Language.get('run_as_admin'))
+        input(Language.get('press_to_exit'))
         return
 
-    print("=== Модификатор денег для Parcel Simulator ===")
-    print("Версия 7.0 - С сигнатурами")
+    print(f"=== {Language.get('title')} ===")
+    print(Language.get('version'))
 
     # Создаем экземпляр модификатора
     changer = MoneyChanger()
 
     # Подключаемся к процессу игры
     if not changer.connect_to_game():
-        input("Нажмите Enter для выхода...")
+        input(Language.get('press_to_exit'))
         return
 
     # Ищем адрес денег
     if not changer.find_money_address():
-        print("Не удалось найти адрес денег. Возможно, игра использует нестандартный формат данных.")
-        input("Нажмите Enter для выхода...")
+        print(Language.get('money_not_found'))
+        input(Language.get('press_to_exit'))
         return
 
     # Главное меню программы
     while True:
-        print("\n=== Меню ===")
-        print(f"Текущее количество денег: {changer.current_money}")
-        print("1. Изменить количество денег")
-        print("2. Найти адрес денег заново")
-        print("0. Выход")
+        print(f"\n{Language.get('menu_title')}")
+        print(f"{Language.get('current_money', changer.current_money)}")
+        print(Language.get('change_money'))
+        print(Language.get('find_address_again'))
+        print(Language.get('language_menu'))
+        print(Language.get('exit'))
 
-        choice = input("Выберите действие: ")
+        choice = input(Language.get('select_action'))
 
         if choice == "1":
             try:
-                new_money = int(input("Введите новое количество денег: "))
+                new_money = int(input(Language.get('enter_new_money_amount')))
                 if changer.change_money(new_money):
-                    print("Деньги успешно изменены!")
+                    print(Language.get('money_changed_success'))
                 else:
-                    print("Не удалось изменить деньги.")
+                    print(Language.get('change_failed'))
             except ValueError:
-                print("Некорректный ввод. Введите число.")
+                print(Language.get('invalid_input'))
 
         elif choice == "2":
             changer.find_money_address()
 
+        elif choice == "3":
+            change_language()
+
         elif choice == "0":
-            print("Закрытие программы...")
+            print(Language.get('closing'))
             changer.disconnect()
             break
 
         else:
-            print("Неверный выбор. Попробуйте снова.")
+            print(Language.get('invalid_choice'))
 
 
 # Запуск программы
