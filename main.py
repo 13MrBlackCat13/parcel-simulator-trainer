@@ -6,6 +6,7 @@ import json
 import ctypes
 import keyboard
 import threading
+import binascii
 
 
 # Проверка прав администратора
@@ -16,7 +17,103 @@ def is_admin():
         return False
 
 
-# Классы для работы с разными типами данных
+# Класс для работы с сигнатурами
+class SignatureScanner:
+    def __init__(self, process_handle):
+        self.process_handle = process_handle
+
+    # Создает сигнатуру из области памяти
+    def create_signature(self, address, size=64):
+        """Создает сигнатуру из области памяти вокруг указанного адреса"""
+        try:
+            # Определяем адрес начала сигнатуры (до адреса)
+            start_addr = address - (size // 2)
+
+            # Читаем блок памяти вокруг адреса
+            memory_bytes = pymem.memory.read_bytes(self.process_handle, start_addr, size)
+
+            # Вычисляем, где находится наше значение относительно начала блока
+            value_offset = size // 2
+
+            # Формируем сигнатуру как шестнадцатеричное представление байт
+            signature = {
+                'bytes': binascii.hexlify(memory_bytes).decode('ascii'),
+                'offset': value_offset,
+                'size': size
+            }
+
+            return signature
+        except Exception as e:
+            print(f"Ошибка при создании сигнатуры: {str(e)}")
+            return None
+
+    # Находит адрес по сигнатуре
+    def find_signature(self, signature, start_addr=None, size=None):
+        """Находит адрес по сигнатуре в памяти процесса"""
+        if not signature or 'bytes' not in signature:
+            return None
+
+        # Преобразуем сигнатуру обратно в байты
+        try:
+            pattern = binascii.unhexlify(signature['bytes'])
+            offset = signature.get('offset', 0)
+        except Exception as e:
+            print(f"Ошибка при обработке сигнатуры: {str(e)}")
+            return None
+
+        # Получаем регионы памяти для сканирования
+        memory_regions = []
+
+        if start_addr is not None and size is not None:
+            # Используем заданный регион
+            memory_regions.append((start_addr, size))
+        else:
+            # Получаем все доступные регионы
+            address = 0
+            while True:
+                try:
+                    mbi = pymem.memory.virtual_query(self.process_handle, address)
+                    address = mbi.BaseAddress + mbi.RegionSize
+
+                    # Проверяем, подходит ли регион для сканирования
+                    if (mbi.State == pymem.ressources.structure.MEMORY_STATE.MEM_COMMIT and
+                            mbi.Protect & pymem.ressources.structure.MEMORY_PROTECTION.PAGE_READWRITE):
+                        memory_regions.append((mbi.BaseAddress, mbi.RegionSize))
+
+                    # Проверка на конец адресного пространства
+                    if address > 0x7FFFFFFFFFFF:
+                        break
+
+                except Exception:
+                    # Пропускаем недоступные регионы
+                    address += 0x1000
+                    if address > 0x7FFFFFFFFFFF:
+                        break
+
+        print("Поиск сигнатуры в памяти...")
+
+        # Сканируем регионы памяти на наличие сигнатуры
+        for base_addr, region_size in memory_regions:
+            try:
+                # Читаем регион памяти
+                buffer = pymem.memory.read_bytes(self.process_handle, base_addr, region_size)
+
+                # Ищем сигнатуру в буфере
+                pos = buffer.find(pattern)
+                if pos != -1:
+                    # Сигнатура найдена! Вычисляем адрес с учетом смещения
+                    result_addr = base_addr + pos + offset
+                    print(f"Найдена сигнатура по адресу {hex(result_addr)}")
+                    return result_addr
+
+            except Exception:
+                # Пропускаем ошибки чтения памяти
+                continue
+
+        return None
+
+
+# Класс для работы с разными типами данных
 class MemoryDataType:
     INT32 = 1
     FLOAT = 2
@@ -256,9 +353,11 @@ class MoneyChanger:
         self.pm = None
         self.process_handle = None
         self.money_addresses = []
-        self.save_file = "parcel_money_addresses.json"
+        self.save_file = "parcel_money_data.json"
         self.scanner = None
+        self.signature_scanner = None
         self.current_money = 0
+        self.signatures = []
 
     # Подключение к процессу игры
     def connect_to_game(self):
@@ -268,8 +367,9 @@ class MoneyChanger:
             self.process_handle = self.pm.process_handle
             print(f"Успешно подключились к игре! (ID процесса: {self.pm.process_id})")
 
-            # Создаем сканер памяти
+            # Создаем сканеры
             self.scanner = DifferentialMemoryScanner(self.process_handle)
+            self.signature_scanner = SignatureScanner(self.process_handle)
 
             return True
         except pymem.exception.ProcessNotFound:
@@ -280,8 +380,8 @@ class MoneyChanger:
             print(f"Ошибка при подключении к игре: {str(e)}")
             return False
 
-    # Загрузка сохраненных адресов
-    def load_saved_addresses(self):
+    # Загрузка сохраненных данных
+    def load_saved_data(self):
         if not os.path.exists(self.save_file):
             return False
 
@@ -289,61 +389,92 @@ class MoneyChanger:
             with open(self.save_file, 'r') as f:
                 data = json.load(f)
 
-                if 'addresses' not in data:
-                    return False
+                # Загружаем адреса
+                if 'addresses' in data:
+                    addresses = [int(addr, 16) for addr in data['addresses']]
+                    print(f"Загружено {len(addresses)} сохраненных адресов.")
 
-                # Загружаем адреса из файла
-                addresses = [int(addr, 16) for addr in data['addresses']]
-                print(f"Загружено {len(addresses)} сохраненных адресов.")
+                    # Проверяем валидность адресов
+                    valid_addresses = []
+                    for addr in addresses:
+                        try:
+                            value = self.pm.read_int(addr)
+                            if 0 <= value <= 10000000:  # Разумный диапазон для денег
+                                valid_addresses.append(addr)
+                                print(f"Адрес {hex(addr)}: значение = {value}")
+                        except:
+                            continue
 
-                # Проверяем валидность адресов
-                valid_addresses = []
-                for addr in addresses:
-                    try:
-                        value = self.pm.read_int(addr)
-                        if 0 <= value <= 10000000:  # Разумный диапазон для денег
-                            valid_addresses.append(addr)
-                            print(f"Адрес {hex(addr)}: значение = {value}")
-                    except:
-                        continue
+                    if valid_addresses:
+                        self.money_addresses = valid_addresses
+                        print(f"Найдено {len(valid_addresses)} действительных адресов.")
 
-                if valid_addresses:
-                    self.money_addresses = valid_addresses
-                    print(f"Найдено {len(valid_addresses)} действительных адресов.")
+                        # Считываем текущее значение денег
+                        try:
+                            self.current_money = self.pm.read_int(valid_addresses[0])
+                            print(f"Текущее количество денег: {self.current_money}")
+                        except:
+                            pass
 
-                    # Считываем текущее значение денег
-                    try:
-                        self.current_money = self.pm.read_int(valid_addresses[0])
-                        print(f"Текущее количество денег: {self.current_money}")
-                    except:
-                        pass
+                        return True
 
-                    return True
-                else:
-                    print("Ни один из сохраненных адресов не действителен.")
-                    return False
+                # Пробуем использовать сигнатуры
+                if 'signatures' in data and not self.money_addresses:
+                    print("Пробуем использовать сохраненные сигнатуры...")
+                    self.signatures = data['signatures']
 
-        except Exception as e:
-            print(f"Ошибка при загрузке сохраненных адресов: {str(e)}")
+                    for i, signature in enumerate(self.signatures):
+                        # Ищем адрес по сигнатуре
+                        addr = self.signature_scanner.find_signature(signature)
+                        if addr:
+                            # Пробуем прочитать значение
+                            try:
+                                value = self.pm.read_int(addr)
+                                if 0 <= value <= 10000000:  # Проверка на разумное значение
+                                    self.money_addresses.append(addr)
+                                    self.current_money = value
+                                    print(f"Найден адрес {hex(addr)} по сигнатуре {i + 1}: значение = {value}")
+                            except:
+                                pass
+
+                    if self.money_addresses:
+                        print(f"Успешно найдено {len(self.money_addresses)} адресов по сигнатурам.")
+                        return True
+
+            print("Не удалось найти действующие адреса или сигнатуры.")
             return False
 
-    # Сохранение адресов
-    def save_addresses(self):
-        if not self.money_addresses:
-            return
+        except Exception as e:
+            print(f"Ошибка при загрузке данных: {str(e)}")
+            return False
 
+    # Сохранение данных
+    def save_data(self):
         try:
             data = {
                 'addresses': [hex(addr) for addr in self.money_addresses],
+                'signatures': self.signatures,
                 'timestamp': time.strftime("%Y-%m-%d %H:%M:%S")
             }
 
             with open(self.save_file, 'w') as f:
                 json.dump(data, f, indent=4)
 
-            print(f"Адреса сохранены в файл {self.save_file}")
+            print(f"Данные сохранены в файл {self.save_file}")
         except Exception as e:
-            print(f"Ошибка при сохранении адресов: {str(e)}")
+            print(f"Ошибка при сохранении данных: {str(e)}")
+
+    # Создание сигнатур
+    def create_signature(self, address):
+        # Создаем сигнатуру
+        print("Создание сигнатуры для адреса денег...")
+        signature = self.signature_scanner.create_signature(address)
+        if signature:
+            self.signatures.append(signature)
+            print("Сигнатура успешно создана!")
+
+        # Сохраняем данные
+        self.save_data()
 
     # Проверка адресов путем изменения значения
     def verify_addresses(self, addresses, test_value):
@@ -453,9 +584,15 @@ class MoneyChanger:
     def find_money_address(self):
         print("Поиск адреса денег в памяти игры...")
 
-        # Сначала пробуем загрузить сохраненные адреса
-        if self.load_saved_addresses():
-            print("Успешно загружены сохраненные адреса.")
+        # Сначала пробуем загрузить сохраненные данные
+        if self.load_saved_data():
+            print("Успешно загружены сохраненные данные.")
+
+            # Если найдены адреса, но нет сигнатур, создаем их
+            if self.money_addresses and not self.signatures:
+                print("Найдены адреса, но нет сигнатур. Создаем их...")
+                self.create_signature(self.money_addresses[0])
+
             return True
 
         print("\nДля поиска адреса денег будет использован метод дифференциального сканирования.")
@@ -511,7 +648,11 @@ class MoneyChanger:
             if verified_addresses:
                 self.money_addresses = verified_addresses
                 self.current_money = current_money
-                self.save_addresses()
+
+                # Создаем сигнатуры для найденных адресов
+                if verified_addresses:
+                    self.create_signature(verified_addresses[0])
+
                 return True
 
         print("Не удалось подтвердить адреса денег.")
@@ -556,7 +697,7 @@ def main():
         return
 
     print("=== Модификатор денег для Parcel Simulator ===")
-    print("Версия 6.0 - С дифференциальным сканированием")
+    print("Версия 7.0 - С сигнатурами")
 
     # Создаем экземпляр модификатора
     changer = MoneyChanger()
